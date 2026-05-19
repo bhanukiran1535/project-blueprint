@@ -1,0 +1,240 @@
+import { useEffect, useState } from 'react';
+import { CheckCircle, XCircle, Clock, Users, DollarSign, Calendar, ReceiptText } from 'lucide-react';
+import './AdminRequests.css';
+import { getCsrfToken } from '../lib/utils';
+import { apiFetch } from '../lib/api';
+
+export const AdminRequests = () => {
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  // State to hold active+upcoming groups
+  const [groupList, setGroupList] = useState([]);
+
+  // For tracking selected groupId per request
+  const [selectedGroups, setSelectedGroups] = useState({});
+
+  const fetchPendingRequests = async () => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/request/pending`, {
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRequests(data.requests);
+      } else {
+        console.error('Failed to fetch requests:', data.message);
+      }
+    } catch (err) {
+      console.error('Error fetching pending requests:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const fetchGroups = async () => {
+    const statuses = ['active', 'upcoming'];
+    const results = await Promise.all(
+      statuses.map(status =>
+        fetch(`${import.meta.env.VITE_API_BASE_URL}/group/status/${status}`, {
+          credentials: 'include',
+        }).then(res => res.json())
+      )
+    );
+    const mergedGroups = results.flatMap(r => (r.success ? r.groups : []));
+    setGroupList(mergedGroups);
+  };
+
+  useEffect(() => {
+    fetchPendingRequests();
+  }, []);
+  
+  useEffect(() => {
+    fetchGroups();
+  }, []);
+
+  const getTypeIcon = (type) => {
+    switch (type) {
+      case 'join_group': return <Users className="type-icon blue" />;
+      case 'payment_confirmation': return <DollarSign className="type-icon green" />;
+      case 'month_prebook': return <Calendar className="type-icon purple" />;
+      case 'leave_group': return <XCircle className="type-icon red" />;
+      case 'confirm_cash_payment': return <ReceiptText className="type-icon orange" />;
+      default: return <Clock className="type-icon gray" />;
+    }
+  };
+
+  const getTypeBadge = (type) => {
+    const typeMap = {
+      'join_group': 'Join Group',
+      'payment_confirmation': 'Payment',
+      'month_prebook': 'Payout Booking',
+      'leave_group': 'Leave Group',
+      'confirm_cash_payment': 'Cash Confirmation',
+    };
+    
+    const typeClass = `type-badge type-${type.replace('_', '-')}`;
+    const typeText = typeMap[type] || 'Unknown';
+    
+    return <span className={typeClass}>{typeText}</span>;
+  };
+
+  const handleApprove = async (requestId, type, groupId) => {
+    const payload = { requestId };
+    if (type === 'join_group') {
+      const seclectedgroupId = selectedGroups[requestId];
+      if (!seclectedgroupId) {
+        return alert('Please select a group before approving.');
+      }
+      payload.seclectedgroupId = seclectedgroupId;
+    }
+    if (type === 'month_prebook') {
+      if (!groupId) {
+        return alert('month is not specified');
+      }
+      payload.groupId = groupId;
+    }
+    try {
+      await apiFetch(`${import.meta.env.VITE_API_BASE_URL}/request/approve`, {
+        method: 'POST',
+        body: payload,
+      });
+      setRequests(prev => prev.filter(r => r.id !== requestId));
+      alert('Request approved.');
+    } catch (err) {
+      // error toast handled by apiFetch
+    }
+  };
+
+  const handleReject = async (requestId) => {
+    try {
+      await apiFetch(`${import.meta.env.VITE_API_BASE_URL}/request/reject`, {
+        method: 'POST',
+        body: { requestId },
+      });
+      setRequests(prev => prev.filter(r => r.id !== requestId));
+      alert('Request rejected.');
+    } catch (err) {}
+  };
+
+  return (
+    <div className="requests-card">
+      <div className="card-header">
+        <div className="header-content">
+          <Clock className="header-icon" />
+          <div>
+            <h2 className="card-title">Pending Requests</h2>
+            <p className="card-subtitle">
+              Review and approve member requests across all groups
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="card-content">
+        {loading ? (
+          <p>Loading requests...</p>
+        ) : (
+          <div className="table-container">
+            <table className="requests-table">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>User</th>
+                  <th>Group</th>
+                  <th>Amount</th>
+                  <th>Message</th>
+                  <th>Date</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requests.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" style={{ textAlign: "center" }}>
+                      No pending requests
+                    </td>
+                  </tr>
+                ) : (
+                  requests.map((request) => (
+                    <tr key={request.id}>
+                      <td>
+                        <div className="type-cell">
+                          {getTypeIcon(request.type)}
+                          {getTypeBadge(request.type)}
+                        </div>
+                      </td>
+                      <td>
+                        <div className="user-cell">
+                          <div className="user-name">{request.user}</div>
+                          <div className="user-email">{request.email}</div>
+                        </div>
+                      </td>
+                      <td className="group-cell">
+                        {request.type === "join_group" ? (
+                          <select
+                            value={selectedGroups[request.id] || ""}
+                            onChange={(e) =>
+                              setSelectedGroups((prev) => ({
+                                ...prev,
+                                [request.id]: e.target.value,
+                              }))
+                            }
+                          >
+                            <option value="">-- Select Group --</option>
+                            {groupList.map((group) => (
+                              <option key={group._id} value={group._id}>
+                                {group.groupNo} - ₹
+                                {group.chitValue.toLocaleString()}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          request.groupId?.groupNo || "—"
+                        )}
+                      </td>
+                      <td>
+                        {request.amount ? (
+                          <span className="amount">
+                            ₹{request.amount.toLocaleString()}
+                          </span>
+                        ) : (
+                          <span className="na">N/A</span>
+                        )}
+                      </td>
+                      <td className="message-cell">
+                        {request.type === 'confirm_cash_payment' && request.monthName ? (
+                          <span>Cash payment for <b>{request.monthName}</b></span>
+                        ) : request.message}
+                      </td>
+                      <td className="date-cell">
+                        {new Date(request.timestamp).toLocaleDateString()}
+                      </td>
+                      <td>
+                        <div className="actions-cell">
+                          <button
+                            className="action-btn approve"
+                            onClick={() => handleApprove(request.id, request.type, request.groupId?._id || request.groupId)}
+                          >
+                            <CheckCircle className="btn-icon" />
+                            Approve
+                          </button>
+                          <button
+                            className="action-btn reject"
+                            onClick={() => handleReject(request.id)}
+                          >
+                            <XCircle className="btn-icon" />
+                            Reject
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
